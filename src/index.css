@@ -1,0 +1,43 @@
+/* src/index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* src/index.css (agrega esto a tu archivo existente) */
+
+/* Animación para elementos de carga */
+.animated-bg {
+    animation: bgPulse 1.5s ease-in-out infinite;
+    background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+    background-size: 200% 100%;
+  }
+  
+  @keyframes bgPulse {
+    0% {
+      background-position: 0% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+  
+  /* Animaciones para las tarjetas de beneficios */
+  .benefit-card {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  
+  .animate-fade-in {
+    animation: fadeIn 0.6s ease-out forwards;
+  }
+  
+  @keyframes fadeIn {
+    0% {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }

@@ -1,0 +1,6 @@
+{
+    "watch": ["tienda-rines-api"],
+    "ext": "js,json",
+    "ignore": ["node_modules"],
+    "exec": "node tienda-rines-api/server.js"
+  }
