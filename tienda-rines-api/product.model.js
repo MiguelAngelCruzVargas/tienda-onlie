@@ -1,142 +1,213 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database.config');
+// tienda-rines-api/product.model.js
+const { sequelize, Sequelize } = require('../config/database.config');
 
-// Definición del modelo de Producto
 const Product = sequelize.define('Product', {
   id: {
-    type: DataTypes.INTEGER,
+    type: Sequelize.INTEGER,
     primaryKey: true,
     autoIncrement: true
   },
   name: {
-    type: DataTypes.STRING(255),
+    type: Sequelize.STRING,
+    allowNull: false
+  },
+  slug: {
+    type: Sequelize.STRING,
     allowNull: false,
-    validate: {
-      notEmpty: { msg: "El nombre del producto no puede estar vacío" }
-    }
+    unique: true
   },
   description: {
-    type: DataTypes.TEXT,
-    allowNull: true,
-    defaultValue: '' // Valor por defecto para evitar NULL
+    type: Sequelize.TEXT,
+    allowNull: true
   },
   price: {
-    type: DataTypes.DECIMAL(10, 2),
-    allowNull: false,
-    defaultValue: 0.00,
-    get() {
-      // Asegurar que siempre se devuelve como número
-      const value = this.getDataValue('price');
-      return value === null ? 0.00 : parseFloat(value);
-    },
-    validate: {
-      min: { args: [0], msg: "El precio no puede ser negativo" }
-    }
-  },
-  originalPrice: {
-    type: DataTypes.DECIMAL(10, 2),
-    allowNull: true,
-    get() {
-      // Asegurar que siempre se devuelve como número o null
-      const value = this.getDataValue('originalPrice');
-      return value === null ? null : parseFloat(value);
-    }
-  },
-  brand: {
-    type: DataTypes.STRING(100),
-    allowNull: true,
-    defaultValue: '' // Valor por defecto para evitar NULL
-  },
-  size: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    defaultValue: null
-  },
-  color: {
-    type: DataTypes.STRING(50),
-    allowNull: true,
-    defaultValue: '' // Valor por defecto para evitar NULL
-  },
-  stock: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    defaultValue: 0,
-    validate: {
-      min: { args: [0], msg: "El stock no puede ser negativo" }
-    }
-  },
-  rating: {
-    type: DataTypes.DECIMAL(3, 2),
-    allowNull: false,
-    defaultValue: 0,
-    get() {
-      // Asegurar que siempre se devuelve como número
-      const value = this.getDataValue('rating');
-      return value === null ? 0 : parseFloat(value);
-    },
-    validate: {
-      min: 0,
-      max: 5
-    }
-  },
-  reviewCount: {
-    type: DataTypes.INTEGER,
+    type: Sequelize.DECIMAL(10, 2),
     allowNull: false,
     defaultValue: 0
   },
-  inStock: {
-    type: DataTypes.BOOLEAN,
-    allowNull: false,
-    defaultValue: true
+  compareAtPrice: {
+    type: Sequelize.DECIMAL(10, 2),
+    allowNull: true,
+    comment: 'Precio anterior, para mostrar descuentos'
   },
-  discount: {
-    type: DataTypes.INTEGER,
+  costPrice: {
+    type: Sequelize.DECIMAL(10, 2),
+    allowNull: true,
+    comment: 'Precio de costo, para cálculos internos'
+  },
+  sku: {
+    type: Sequelize.STRING,
+    allowNull: true,
+    unique: true
+  },
+  barcode: {
+    type: Sequelize.STRING,
+    allowNull: true
+  },
+  inventory: {
+    type: Sequelize.INTEGER,
     allowNull: false,
-    defaultValue: 0,
-    validate: {
-      min: 0,
-      max: 100
+    defaultValue: 0
+  },
+  weight: {
+    type: Sequelize.FLOAT,
+    allowNull: true,
+    comment: 'Peso en kilogramos'
+  },
+  width: {
+    type: Sequelize.FLOAT,
+    allowNull: true,
+    comment: 'Ancho en centímetros'
+  },
+  height: {
+    type: Sequelize.FLOAT,
+    allowNull: true,
+    comment: 'Alto en centímetros'
+  },
+  depth: {
+    type: Sequelize.FLOAT,
+    allowNull: true,
+    comment: 'Profundidad en centímetros'
+  },
+  images: {
+    type: Sequelize.TEXT,
+    allowNull: true,
+    get() {
+      const rawValue = this.getDataValue('images');
+      return rawValue ? JSON.parse(rawValue) : [];
+    },
+    set(value) {
+      this.setDataValue('images', JSON.stringify(value));
     }
   },
-  imageUrl: {
-    type: DataTypes.STRING(255),
+  thumbnail: {
+    type: Sequelize.STRING,
+    allowNull: true
+  },
+  featured: {
+    type: Sequelize.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
+  status: {
+    type: Sequelize.ENUM('active', 'draft', 'archived'),
+    defaultValue: 'draft'
+  },
+  categoryId: {
+    type: Sequelize.INTEGER,
+    allowNull: true
+  },
+  tags: {
+    type: Sequelize.TEXT,
     allowNull: true,
-    defaultValue: null,
-    validate: {
-      isUrl: { 
-        msg: "La URL de la imagen debe ser válida",
-        // No validar si el valor es nulo
-        allowNull: true
+    get() {
+      const rawValue = this.getDataValue('tags');
+      return rawValue ? JSON.parse(rawValue) : [];
+    },
+    set(value) {
+      this.setDataValue('tags', JSON.stringify(value));
+    }
+  },
+  attributes: {
+    type: Sequelize.TEXT,
+    allowNull: true,
+    get() {
+      const rawValue = this.getDataValue('attributes');
+      return rawValue ? JSON.parse(rawValue) : {};
+    },
+    set(value) {
+      this.setDataValue('attributes', JSON.stringify(value));
+    }
+  },
+  metaTitle: {
+    type: Sequelize.STRING,
+    allowNull: true
+  },
+  metaDescription: {
+    type: Sequelize.TEXT,
+    allowNull: true
+  },
+  metaKeywords: {
+    type: Sequelize.STRING,
+    allowNull: true
+  },
+  searchTerms: {
+    type: Sequelize.TEXT,
+    allowNull: true,
+    comment: 'Términos de búsqueda adicionales'
+  },
+  rating: {
+    type: Sequelize.FLOAT,
+    allowNull: true,
+    defaultValue: 0
+  },
+  reviewCount: {
+    type: Sequelize.INTEGER,
+    allowNull: false,
+    defaultValue: 0
+  },
+  soldCount: {
+    type: Sequelize.INTEGER,
+    allowNull: false,
+    defaultValue: 0
+  }
+}, {
+  timestamps: true,
+  paranoid: true,
+  tableName: 'products',
+  hooks: {
+    beforeValidate: (product) => {
+      // Generar slug a partir del nombre si no está definido
+      if (!product.slug && product.name) {
+        product.slug = product.name
+          .toLowerCase()
+          .replace(/[^\w\s]/gi, '')
+          .replace(/\s+/g, '-');
       }
     }
   },
-  status: {
-    type: DataTypes.ENUM('active', 'inactive'),
-    allowNull: false,
-    defaultValue: 'active'
-  },
-  categoryId: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    defaultValue: null,
-    references: {
-      model: 'categories',
-      key: 'id'
+  defaultScope: {
+    where: {
+      status: 'active'
     }
-  }
-}, {
-  tableName: 'products',
-  timestamps: true,
-  paranoid: true, // Soft delete
-  // Hooks para garantizar que ciertos campos nunca sean nulos
-  hooks: {
-    beforeSave: (product) => {
-      // Asegurar que los campos string que no deben ser null sean al menos strings vacíos
-      if (product.description === null) product.description = '';
-      if (product.brand === null) product.brand = '';
-      if (product.color === null) product.color = '';
+  },
+  scopes: {
+    // Incluir todos los productos, independientemente del estado
+    allProducts: {},
+    // Solo productos destacados
+    featured: {
+      where: {
+        featured: true,
+        status: 'active'
+      }
     }
   }
 });
+
+// Método de instancia para calcular el porcentaje de descuento
+Product.prototype.getDiscountPercentage = function() {
+  if (!this.compareAtPrice || this.compareAtPrice <= this.price) {
+    return 0;
+  }
+  return Math.round(((this.compareAtPrice - this.price) / this.compareAtPrice) * 100);
+};
+
+// Método de instancia para verificar si el producto tiene stock bajo
+Product.prototype.isLowStock = function() {
+  return this.inventory > 0 && this.inventory <= 3;
+};
+
+// Método virtual para determinar si el producto es nuevo (menos de 30 días)
+Product.prototype.isNew = function() {
+  if (!this.createdAt) return false;
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  return new Date(this.createdAt) >= thirtyDaysAgo;
+};
+
+// Método virtual para determinar si es un bestseller basado en ventas
+Product.prototype.isBestseller = function() {
+  return this.soldCount >= 5; // Umbrales personalizables
+};
 
 module.exports = Product;

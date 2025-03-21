@@ -1,0 +1,128 @@
+{
+  "total_requests": 98,
+  "visitors": {
+    "127.0.0.1": {
+      "count": 11,
+      "first_access": "2025-03-20T21:16:23.972157",
+      "last_access": "2025-03-20T21:51:49.312453",
+      "paths": [
+        {
+          "path": "/favicon.ico",
+          "time": "2025-03-20T21:39:03.848621",
+          "method": "GET"
+        },
+        {
+          "path": "/favicon.ico",
+          "time": "2025-03-20T21:39:36.553569",
+          "method": "GET"
+        },
+        {
+          "path": "/favicon.ico",
+          "time": "2025-03-20T21:39:39.792327",
+          "method": "GET"
+        },
+        {
+          "path": "/favicon.ico",
+          "time": "2025-03-20T21:40:28.612447",
+          "method": "GET"
+        },
+        {
+          "path": "/favicon.ico",
+          "time": "2025-03-20T21:40:31.606483",
+          "method": "GET"
+        },
+        {
+          "path": "/favicon.ico",
+          "time": "2025-03-20T21:40:43.094458",
+          "method": "GET"
+        },
+        {
+          "path": "/favicon.ico",
+          "time": "2025-03-20T21:42:32.210673",
+          "method": "GET"
+        },
+        {
+          "path": "/favicon.ico",
+          "time": "2025-03-20T21:46:51.337700",
+          "method": "GET"
+        },
+        {
+          "path": "/favicon.ico",
+          "time": "2025-03-20T21:46:57.254920",
+          "method": "GET"
+        },
+        {
+          "path": "/favicon.ico",
+          "time": "2025-03-20T21:51:49.312453",
+          "method": "GET"
+        }
+      ]
+    },
+    "192.168.1.72": {
+      "count": 87,
+      "first_access": "2025-03-20T21:27:03.459015",
+      "last_access": "2025-03-20T22:15:43.869629",
+      "paths": [
+        {
+          "path": "/api/products?sort=soldCount&order=DESC&limit=4",
+          "time": "2025-03-20T21:45:37.113828",
+          "method": "GET"
+        },
+        {
+          "path": "/api/reviews/featured?limit=2",
+          "time": "2025-03-20T21:45:37.190174",
+          "method": "GET"
+        },
+        {
+          "path": "/api/categories?featured=true",
+          "time": "2025-03-20T21:45:37.232490",
+          "method": "GET"
+        },
+        {
+          "path": "/api/categories?featured=true",
+          "time": "2025-03-20T21:45:37.311909",
+          "method": "GET"
+        },
+        {
+          "path": "/images/pattern.png",
+          "time": "2025-03-20T21:45:37.702947",
+          "method": "GET"
+        },
+        {
+          "path": "/",
+          "time": "2025-03-20T21:48:20.190520",
+          "method": "GET"
+        },
+        {
+          "path": "/@vite/client",
+          "time": "2025-03-20T21:48:22.305968",
+          "method": "GET"
+        },
+        {
+          "path": "/src/main.jsx",
+          "time": "2025-03-20T21:48:24.388055",
+          "method": "GET"
+        },
+        {
+          "path": "/node_modules/vite/dist/client/env.mjs",
+          "time": "2025-03-20T21:48:26.511747",
+          "method": "GET"
+        },
+        {
+          "path": "/",
+          "time": "2025-03-20T22:15:43.869629",
+          "method": "GET"
+        }
+      ]
+    }
+  },
+  "started_at": "2025-03-20T21:15:01.943150",
+  "last_access": "2025-03-20T22:15:43.869629",
+  "127.0.0.1": [
+    {
+      "time": "2025-03-20T21:51:23.613121",
+      "method": "GET",
+      "path": "/favicon.ico"
+    }
+  ]
+}

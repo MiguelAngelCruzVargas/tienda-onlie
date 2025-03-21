@@ -1,15 +1,15 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database.config');
+// tienda-rines-api/user.model.js
+const { sequelize, Sequelize } = require('../config/database.config');
 const bcrypt = require('bcryptjs');
 
 const User = sequelize.define('User', {
   id: {
-    type: DataTypes.INTEGER,
+    type: Sequelize.INTEGER,
     primaryKey: true,
     autoIncrement: true
   },
   email: {
-    type: DataTypes.STRING,
+    type: Sequelize.STRING,
     allowNull: false,
     unique: true,
     validate: {
@@ -17,17 +17,16 @@ const User = sequelize.define('User', {
     }
   },
   password: {
-    type: DataTypes.STRING,
+    type: Sequelize.STRING,
     allowNull: false
   },
   role: {
-    type: DataTypes.ENUM('admin', 'editor', 'viewer'),
+    type: Sequelize.ENUM('admin', 'editor', 'viewer'),
     defaultValue: 'viewer'
   },
   lastLogin: {
-    type: DataTypes.DATE,
-    allowNull: true,
-    defaultValue: null
+    type: Sequelize.DATE,
+    allowNull: true
   }
 }, {
   hooks: {
@@ -43,14 +42,12 @@ const User = sequelize.define('User', {
         user.password = await bcrypt.hash(user.password, salt);
       }
     }
-  },
-  timestamps: true,
-  paranoid: true // Soft delete
+  }
 });
 
-// Método para validar contraseña
-User.prototype.validatePassword = async function(password) {
-  return bcrypt.compare(password, this.password);
+// Método para verificar contraseña
+User.prototype.verifyPassword = async function(password) {
+  return await bcrypt.compare(password, this.password);
 };
 
 module.exports = User;

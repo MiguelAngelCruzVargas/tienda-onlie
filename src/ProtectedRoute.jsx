@@ -1,34 +1,31 @@
 // src/ProtectedRoute.jsx
 import React from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from './AuthContext.jsx';
+import { Navigate } from 'react-router-dom';
+import { useAuth } from './AuthContext';
 
-const ProtectedRoute = ({ children, requiredRole = 'admin' }) => {
+const ProtectedRoute = ({ children }) => {
   const { currentUser, isLoading } = useAuth();
-  const location = useLocation();
-
-  // Mostrar un indicador de carga mientras se verifica la autenticación
+  
+  // Si todavía está cargando, mostrar un indicador de carga
   if (isLoading) {
     return (
-      <div className="flex justify-center items-center h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+      <div className="flex justify-center items-center h-screen bg-gray-900">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-yellow-500"></div>
       </div>
     );
   }
-
-  // Verificar si el usuario está autenticado
+  
+  // Si no hay usuario autenticado, redirigir al login
   if (!currentUser) {
-    // Redirigir al login si no está autenticado, guardando la ubicación actual
-    return <Navigate to="/admin" state={{ from: location }} replace />;
+    return <Navigate to="/admin" replace />;
   }
-
-  // Verificar si el usuario tiene el rol requerido
-  if (requiredRole && currentUser.role !== requiredRole) {
-    // Redirigir a una página de acceso denegado
+  
+  // Si hay un usuario autenticado pero no es admin, redirigir a acceso denegado
+  if (currentUser.role !== 'admin') {
     return <Navigate to="/acceso-denegado" replace />;
   }
-
-  // Usuario autenticado con el rol correcto
+  
+  // Si hay un usuario admin autenticado, mostrar la ruta protegida
   return children;
 };
 

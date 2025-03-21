@@ -1,51 +1,75 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database.config');
+// tienda-rines-api/category.model.js
+const { sequelize, Sequelize } = require('../config/database.config');
 
 const Category = sequelize.define('Category', {
   id: {
-    type: DataTypes.INTEGER,
+    type: Sequelize.INTEGER,
     primaryKey: true,
     autoIncrement: true
   },
   name: {
-    type: DataTypes.STRING(100),
+    type: Sequelize.STRING,
+    allowNull: false
+  },
+  slug: {
+    type: Sequelize.STRING,
     allowNull: false,
     unique: true
   },
   description: {
-    type: DataTypes.TEXT,
+    type: Sequelize.TEXT,
     allowNull: true
   },
-  imageUrl: {
-    type: DataTypes.STRING(255),
+  image: {
+    type: Sequelize.STRING,
     allowNull: true
+  },
+  parentId: {
+    type: Sequelize.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'Categories',
+      key: 'id'
+    }
+  },
+  order: {
+    type: Sequelize.INTEGER,
+    allowNull: false,
+    defaultValue: 0
   },
   status: {
-    type: DataTypes.ENUM('active', 'inactive'),
+    type: Sequelize.ENUM('active', 'inactive'),
     defaultValue: 'active'
   },
-  createdAt: {
-    type: DataTypes.DATE,
+  featured: {
+    type: Sequelize.BOOLEAN,
     allowNull: false,
-    defaultValue: DataTypes.NOW
+    defaultValue: false
   },
-  updatedAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW
+  metaTitle: {
+    type: Sequelize.STRING,
+    allowNull: true
+  },
+  metaDescription: {
+    type: Sequelize.TEXT,
+    allowNull: true
+  },
+  metaKeywords: {
+    type: Sequelize.STRING,
+    allowNull: true
   }
 }, {
-  tableName: 'categories',
   timestamps: true,
   paranoid: true,
+  tableName: 'categories',
   hooks: {
     beforeValidate: (category) => {
-      // Asegurar que las fechas tengan un valor válido
-      if (!category.createdAt) {
-        category.createdAt = new Date();
-      }
-      if (!category.updatedAt) {
-        category.updatedAt = new Date();
+      // Generar slug a partir del nombre si no está definido
+      if (!category.slug && category.name) {
+        category.slug = category.name
+          .toLowerCase()
+          .replace(/[^\w\s]/gi, '')
+          .replace(/\s+/g, '-');
       }
     }
   }

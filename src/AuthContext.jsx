@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-
+import { API_BASE } from './utils/apiConfig';
 // Crear el contexto
 const AuthContext = createContext();
 
@@ -16,10 +16,10 @@ export const AuthProvider = ({ children }) => {
   // Función para iniciar sesión
   const login = async (credentials) => {
     try {
-      // Configuración de URL base con manejo más robusto
-      const API_BASE = import.meta.env.DEV 
-        ? import.meta.env.VITE_API_URL || 'http://localhost:3000'
-        : '';
+      // // Configuración de URL base con manejo más robusto
+      // const API_BASE = import.meta.env.DEV 
+      //   ? import.meta.env.VITE_API_URL || 'http://localhost:3000'
+      //   : '';
       
       // Configuración de timeout para manejar conexiones fallidas
       const controller = new AbortController();
@@ -53,11 +53,13 @@ export const AuthProvider = ({ children }) => {
           localStorage.setItem('token', data.token);
           
           // Guardar información del usuario
+          // Adaptado a la estructura real de la base de datos (sin campo name)
           const user = {
             id: data.user?.id || 1,
-            name: data.user?.name || 'Admin',
             email: data.user?.email || credentials.email,
-            role: data.user?.role || 'admin'
+            role: data.user?.role || 'admin',
+            // Usamos email como nombre para la UI cuando se necesite mostrar algo
+            displayName: data.user?.email || credentials.email
           };
           
           localStorage.setItem('user', JSON.stringify(user));
@@ -106,7 +108,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Resto del código permanece igual...
+  // Función para cerrar sesión
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -123,6 +125,12 @@ export const AuthProvider = ({ children }) => {
         
         if (token && userString) {
           const user = JSON.parse(userString);
+          
+          // Asegurar que el usuario tenga la propiedad displayName
+          if (!user.displayName && user.email) {
+            user.displayName = user.email;
+          }
+          
           setCurrentUser(user);
           setIsAuthenticated(true);
         }
