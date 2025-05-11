@@ -1165,3 +1165,820 @@ $tamanos = $stmt->fetchAll();
 </body>
 
 </html>
+
+moficacion 2
+<?php
+ob_start(); // Iniciar el buffering de salida al principio
+
+require_once 'header.php'; // header.php DEBE manejar session_start()
+require_once '../admin/config.php';
+
+// --- Validaciones Iniciales ---
+if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
+    // Considera redirigir a una página de error o mostrar un mensaje más amigable
+    die("ID de producto no válido.");
+}
+$id = (int) $_GET['id'];
+
+// --- Constante para limitar opiniones en esta página ---
+define('MAX_OPINIONES_EN_DETALLE', 3); // Correcto, esto limitará las opiniones iniciales
+
+// --- Obtener Información del Producto ---
+// ... (Tu código para obtener $producto, $promocion_data, $imagenes_adicionales, etc. permanece igual)
+$stmt_producto = $pdo->prepare("SELECT p.*, c.nombre AS categoria, m.nombre_modelo AS modelo, t.valor AS tamano
+                                 FROM productos p
+                                 LEFT JOIN categorias c ON p.id_categoria = c.id
+                                 LEFT JOIN modelos m ON p.id_modelo = m.id
+                                 LEFT JOIN tamanos t ON p.id_tamano = t.id
+                                 WHERE p.id = ?");
+$stmt_producto->execute([$id]);
+$producto = $stmt_producto->fetch();
+
+if (!$producto) {
+    die("Producto no encontrado.");
+}
+
+// --- Obtener Información de Promoción (si existe, activa y vigente) ---
+$stmt_promocion = $pdo->prepare("SELECT * FROM promociones WHERE producto_id = ? AND activa = 1 AND fecha_inicio <= CURDATE() AND fecha_fin >= CURDATE() LIMIT 1");
+$stmt_promocion->execute([$id]);
+$promocion_data = $stmt_promocion->fetch();
+
+// --- Obtener Imágenes Adicionales ---
+$stmt_imagenes = $pdo->prepare("SELECT url_imagen FROM imagenes_producto WHERE producto_id = ?");
+$stmt_imagenes->execute([$id]);
+$imagenes_adicionales = $stmt_imagenes->fetchAll();
+
+// --- Lógica de Gestión de Opiniones ---
+$usuario_logueado = isset($_SESSION['usuario_id']);
+$id_usuario_actual = $usuario_logueado ? (int)$_SESSION['usuario_id'] : null;
+$nombre_usuario_actual = $usuario_logueado ? ($_SESSION['usuario_nombre'] ?? 'Usuario') : null;
+
+$comentario_existente_usuario = null;
+if ($usuario_logueado) {
+    $stmt_check_opinion = $pdo->prepare("SELECT * FROM testimonios WHERE producto_id = ? AND usuario_id = ? LIMIT 1");
+    $stmt_check_opinion->execute([$id, $id_usuario_actual]);
+    $comentario_existente_usuario = $stmt_check_opinion->fetch();
+}
+
+$mostrar_formulario_para_crear_o_editar = false;
+if ($usuario_logueado) {
+    if (!$comentario_existente_usuario) {
+        $mostrar_formulario_para_crear_o_editar = true;
+    } else {
+        if (isset($_GET['editar_opinion']) && $_GET['editar_opinion'] == '1') {
+            $mostrar_formulario_para_crear_o_editar = true;
+        }
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion_opinion'])) {
+    // ... (Tu lógica de procesamiento de envío de opinión permanece igual)
+    if (!$usuario_logueado) {
+        $_SESSION['mensaje_envio'] = "Debes iniciar sesión para enviar o editar tu opinión.";
+        header("Location: detalle_producto.php?id=" . $id . "&opinion_procesada=1#escribe-opinion-seccion");
+        exit;
+    }
+
+    $mensaje_opinion_contenido = trim($_POST['mensaje_opinion_input'] ?? '');
+    $rating = isset($_POST['rating']) ? (int)$_POST['rating'] : 0;
+    $accion = $_POST['accion_opinion'];
+
+    if ($mensaje_opinion_contenido && $rating >= 1 && $rating <= 5) {
+        if ($accion === 'crear' && !$comentario_existente_usuario) {
+            $stmt_insert = $pdo->prepare("INSERT INTO testimonios (nombre_cliente, mensaje, rating, producto_id, usuario_id, publicado, creado_en, editado_en)
+                                          VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())");
+            if ($stmt_insert->execute([$nombre_usuario_actual, $mensaje_opinion_contenido, $rating, $id, $id_usuario_actual])) {
+                $_SESSION['mensaje_envio'] = "Tu opinión ha sido publicada exitosamente.";
+            } else {
+                $_SESSION['mensaje_envio'] = "Error al guardar tu opinión. Inténtalo de nuevo.";
+            }
+        } elseif ($accion === 'editar' && $comentario_existente_usuario) {
+            $id_opinion_a_editar = (int)$comentario_existente_usuario['id'];
+            $stmt_update = $pdo->prepare("UPDATE testimonios
+                                          SET mensaje = ?, rating = ?, editado_en = NOW()
+                                          WHERE id = ? AND usuario_id = ?");
+            if ($stmt_update->execute([$mensaje_opinion_contenido, $rating, $id_opinion_a_editar, $id_usuario_actual])) {
+                $_SESSION['mensaje_envio'] = "Tu opinión ha sido actualizada exitosamente.";
+            } else {
+                $_SESSION['mensaje_envio'] = "Error al actualizar tu opinión. Inténtalo de nuevo.";
+            }
+        } else {
+            $_SESSION['mensaje_envio'] = "Acción no válida o ya has comentado este producto.";
+        }
+    } else {
+        $_SESSION['mensaje_envio'] = "Por favor completa todos los campos correctamente (opinión y calificación).";
+    }
+    header("Location: detalle_producto.php?id=" . $id . "&opinion_procesada=1#escribe-opinion-seccion");
+    exit;
+}
+
+$mensaje_envio_feedback = '';
+if (isset($_SESSION['mensaje_envio'])) {
+    $mensaje_envio_feedback = $_SESSION['mensaje_envio'];
+    unset($_SESSION['mensaje_envio']);
+}
+
+// --- Obtener Opiniones para Mostrar (las primeras MAX_OPINIONES_EN_DETALLE) ---
+$stmt_count_opiniones = $pdo->prepare("SELECT COUNT(*) FROM testimonios WHERE producto_id = ? AND publicado = 1");
+$stmt_count_opiniones->execute([$id]);
+$total_opiniones_producto = (int)$stmt_count_opiniones->fetchColumn(); // Total de opiniones para este producto
+
+$opiniones_para_mostrar = [];
+if ($total_opiniones_producto > 0) {
+    $stmt_opiniones_detalle = $pdo->prepare("SELECT * FROM testimonios WHERE producto_id = :producto_id AND publicado = 1 ORDER BY creado_en DESC LIMIT :limit");
+    $stmt_opiniones_detalle->bindValue(':producto_id', $id, PDO::PARAM_INT);
+    $stmt_opiniones_detalle->bindValue(':limit', MAX_OPINIONES_EN_DETALLE, PDO::PARAM_INT); // Usa la constante
+    $stmt_opiniones_detalle->execute();
+    $opiniones_para_mostrar = $stmt_opiniones_detalle->fetchAll();
+}
+
+// --- Calcular Rating Promedio ---
+// ... (Tu código para calcular $rating_promedio permanece igual)
+$rating_promedio = 0;
+if ($total_opiniones_producto > 0) {
+    $stmt_sum_rating = $pdo->prepare("SELECT SUM(rating) FROM testimonios WHERE producto_id = ? AND publicado = 1");
+    $stmt_sum_rating->execute([$id]);
+    $sum_ratings = (float)$stmt_sum_rating->fetchColumn();
+    $rating_promedio = $sum_ratings / $total_opiniones_producto;
+}
+
+// --- Productos Relacionados ---
+// ... (Tu código para $productos_relacionados permanece igual)
+$stmt_relacionados = $pdo->prepare("SELECT id, nombre, imagen_principal, precio FROM productos
+                                     WHERE (id_categoria = ? OR id_modelo = ?) AND id != ?
+                                     LIMIT 4");
+$stmt_relacionados->execute([($producto['id_categoria'] ?? null), ($producto['id_modelo'] ?? null), $id]);
+$productos_relacionados = $stmt_relacionados->fetchAll();
+
+// --- Cálculo de Precio con Promoción y Ahorro ---
+// ... (Tu código para $precio_final, $precio_original, $ahorro, $porcentaje_ahorro permanece igual)
+$precio_base_producto = (float) $producto['precio'];
+$precio_final = $precio_base_producto;
+$precio_original = null;
+$ahorro = 0;
+$porcentaje_ahorro = 0;
+
+if ($promocion_data) {
+    $valor_promocion_num = (float) ($promocion_data['valor_promocion'] ?? 0);
+    $tipo_promocion_actual = $promocion_data['tipo_promocion'] ?? '';
+
+    if ($tipo_promocion_actual === 'descuento' && $valor_promocion_num > 0) {
+        $descuento_calculado = $precio_base_producto * ($valor_promocion_num / 100);
+        $precio_final = $precio_base_producto - $descuento_calculado;
+        $precio_original = $precio_base_producto;
+    } elseif ($tipo_promocion_actual === 'descuento_fijo' && $valor_promocion_num > 0) {
+        $precio_final = $precio_base_producto - $valor_promocion_num;
+        $precio_original = $precio_base_producto;
+    }
+
+    if ($precio_final < 0) $precio_final = 0;
+
+    if ($precio_original !== null && $precio_original > $precio_final) {
+        $ahorro = $precio_original - $precio_final;
+        if ($precio_original > 0) {
+            $porcentaje_ahorro = round(($ahorro / $precio_original) * 100);
+        }
+    } else {
+        $precio_original = null;
+    }
+}
+
+// --- Agrupar Imágenes ---
+// ... (Tu código para $todas_imagenes permanece igual)
+$todas_imagenes = array();
+if (!empty($producto['imagen_principal'])) {
+    $todas_imagenes[] = $producto['imagen_principal'];
+}
+foreach ($imagenes_adicionales as $img) {
+    $todas_imagenes[] = $img['url_imagen'];
+}
+
+// --- Validar Pestaña de Promoción ---
+// ... (Tu código para $promocion_tab_valida permanece igual)
+$promocion_tab_valida = false;
+if ($promocion_data) {
+    $tipo_promo = $promocion_data['tipo_promocion'] ?? '';
+    $valor_promo = (float)($promocion_data['valor_promocion'] ?? 0);
+    $descripcion_promo = trim($promocion_data['descripcion'] ?? '');
+    if (($tipo_promo && $tipo_promo !== 'otro' && $valor_promo > 0) ||
+        (in_array($tipo_promo, ['regalo', 'envio_gratis'])) ||
+        ($tipo_promo === 'otro' && !empty($descripcion_promo)) ||
+        (!empty($promocion_data['fecha_inicio']) && !empty($promocion_data['fecha_fin']))
+    ) {
+        $promocion_tab_valida = true;
+    }
+}
+
+// --- URL Canónica ---
+$producto_url_canonica = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://" . $_SERVER['HTTP_HOST'] . strtok($_SERVER["REQUEST_URI"], '?') . "?id=" . $id;
+
+// --- Función para mostrar etiquetas de producto ---
+if (!function_exists('mostrar_etiqueta_producto_con_estilo')) {
+    function mostrar_etiqueta_producto_con_estilo($valor, $clase_color_fondo_texto, $texto_por_defecto_si_vacio = 'N/A', $es_circulo_si_vacio = true) {
+        $valor_limpio = trim((string)$valor);
+        
+        $clase_final_etiqueta = 'etiqueta-producto-base ' . $clase_color_fondo_texto;
+        $contenido_span = '';
+
+        if (!empty($valor_limpio)) {
+            $contenido_span = htmlspecialchars($valor_limpio);
+        } elseif ($es_circulo_si_vacio) {
+            $clase_final_etiqueta .= ' etiqueta-circulo-vacio';
+        } elseif (!empty($texto_por_defecto_si_vacio) && $texto_por_defecto_si_vacio !== 'N/A') { 
+            $contenido_span = htmlspecialchars($texto_por_defecto_si_vacio);
+        } elseif ($texto_por_defecto_si_vacio === 'N/A' && !$es_circulo_si_vacio) {
+            $contenido_span = htmlspecialchars($texto_por_defecto_si_vacio);
+        }
+        
+        if (!empty($contenido_span) || strpos($clase_final_etiqueta, 'etiqueta-circulo-vacio') !== false) {
+?>
+            <span class="<?= $clase_final_etiqueta ?>">
+                <?= $contenido_span ?>
+            </span>
+<?php
+        }
+    }
+}
+?>
+
+<style>
+    /* ... (Tus estilos permanecen iguales) ... */
+    html, body { max-width: 100%; overflow-x: hidden; }
+    .fade-in { opacity: 0; animation: fadeIn 0.8s forwards; }
+    @keyframes fadeIn { to { opacity: 1; } }
+    .delay-100 { animation-delay: 0.1s; }
+    .delay-200 { animation-delay: 0.2s; }
+    .delay-300 { animation-delay: 0.3s; }
+    .delay-400 { animation-delay: 0.4s; }
+    .delay-500 { animation-delay: 0.5s; }
+    
+    .share-modal-container {
+        background: rgba(30, 41, 59, 0.85); 
+        backdrop-filter: blur(10px); 
+        -webkit-backdrop-filter: blur(10px); 
+        border: 1px solid rgba(71, 85, 105, 0.5); 
+        color: #e2e8f0; 
+        border-radius: 0.75rem; 
+        box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04); 
+        overflow: hidden; 
+    }
+    .share-modal-header {
+        background-color: #f5b401; 
+        color: #1e293b; 
+        padding: 1rem 1.5rem; 
+    }
+    .share-modal-header h3 { color: #1e293b; }
+    .share-modal-header .brand-name { font-size: 0.8rem; color: #334155; margin-top: 0.1rem; }
+    .share-modal-body { padding: 1.5rem; }
+    .share-modal-body label { color: #94a3b8; }
+    .share-modal-body input[type="text"] { background-color: rgba(51, 65, 85, 0.7); border-color: #475569; color: #e2e8f0; }
+    .share-modal-body input[type="text"]::placeholder { color: #64748b; }
+    .share-modal-body .copy-button { background-color: #f5b401; color: #1e293b; }
+    .share-modal-body .copy-button:hover { background-color: #eab308; }
+    .share-modal-body .social-share-button { background-color: #334155; color: #e2e8f0; }
+    .share-modal-body .social-share-button:hover { background-color: #475569; }
+    .share-modal-close-button { color: #4b5563; }
+    .share-modal-close-button:hover { color: #1f2937; }
+
+    @supports not ((backdrop-filter: blur(8px)) or (-webkit-backdrop-filter: blur(8px))) { 
+        .share-modal-container { background: rgba(30, 41, 59, 0.95); } 
+    }
+
+    .glass { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.1); }
+    .bg-blur { backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+    .gallery-thumb { transition: all 0.3s ease; border: 2px solid transparent; }
+    .gallery-thumb:hover { transform: scale(1.05); }
+    .gallery-thumb.active { border-color: #f5b401; transform: scale(1.05); }
+    .badge-pulse { animation: pulseEffect 2s infinite; }
+    @keyframes pulseEffect { 0% { box-shadow: 0 0 0 0 rgba(245, 180, 1, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(245, 180, 1, 0); } 100% { box-shadow: 0 0 0 0 rgba(245, 180, 1, 0); } }
+    .promo-badge { background: linear-gradient(135deg, #f5b401, #ff9800); }
+    .spec-table td { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+    .spec-table tr:not(:last-child) td { border-bottom: 1px solid rgba(75, 85, 99, 0.7); }
+
+    .etiqueta-producto-base {
+        display: inline-block;
+        padding: 0.25rem 0.75rem; /* py-1 px-3 */
+        border-radius: 9999px; /* rounded-full */
+        font-size: 0.75rem; /* text-xs */
+        font-weight: 600; /* font-semibold */
+        margin-right: 0.5rem; 
+        margin-bottom: 0.5rem; /* Asegura espacio si se van a la siguiente línea */
+    }
+
+    .etiqueta-circulo-vacio {
+        width: 20px; 
+        height: 20px; 
+        padding: 0 !important; 
+        text-indent: -9999px; /* Oculta cualquier texto residual */
+        overflow: hidden;
+    }
+    .hidden { display: none !important; }
+</style>
+
+<div x-data="{ 
+    showShareModal: false, 
+    shareUrl: '<?= htmlspecialchars($producto_url_canonica) ?>', 
+    productName: '<?= htmlspecialchars(addslashes($producto['nombre'])) ?>',
+    showOpinionesSeccion: <?= (count($opiniones_para_mostrar) > 0 && !isset($_GET['opinion_procesada'])) ? 'true' : 'false' ?>, // Modificado para mostrar por defecto si hay opiniones y no se está procesando una
+    ratingValueForm: <?= $comentario_existente_usuario ? (int)$comentario_existente_usuario['rating'] : 0 ?>
+}">
+    <div class="relative py-8 bg-slate-900 overflow-hidden">
+        <div class="absolute inset-0 overflow-hidden">
+            <img src="<?= !empty($producto['imagen_principal']) ? htmlspecialchars($producto['imagen_principal']) : '/sitio/assets/img/placeholder.jpg' ?>"
+                 alt="Fondo de <?= htmlspecialchars($producto['nombre']) ?>"
+                 class="w-full h-full object-cover blur-sm opacity-20">
+            <div class="absolute inset-0 bg-gradient-to-b from-slate-900/80 to-slate-900"></div>
+        </div>
+
+        <div class="container mx-auto px-4 relative z-10">
+            <div class="flex text-sm text-slate-400 mb-4 items-center">
+                <a href="index.php" class="hover:text-white transition-colors">Inicio</a>
+                <span class="mx-2">/</span>
+                <a href="productos.php" class="hover:text-white transition-colors">Productos</a>
+                <span class="mx-2">/</span>
+                <a href="productos.php?categoria=<?= $producto['id_categoria'] ?? '' ?>" class="hover:text-white transition-colors">
+                    <?= htmlspecialchars($producto['categoria'] ?? 'General') ?>
+                </a>
+                <span class="mx-2">/</span>
+                <span class="text-white font-medium"><?= htmlspecialchars($producto['nombre']) ?></span>
+            </div>
+
+            <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-3 fade-in">
+                <?= htmlspecialchars($producto['nombre']) ?>
+            </h1>
+
+            <div class="flex flex-wrap gap-x-2 gap-y-1 mb-6 fade-in delay-100">
+                <?php mostrar_etiqueta_producto_con_estilo($producto['categoria'], 'bg-sky-700/50 text-sky-200', 'N/A', true); ?>
+                <?php mostrar_etiqueta_producto_con_estilo($producto['modelo'], 'bg-indigo-700/50 text-indigo-200', 'N/A', true); ?>
+                <?php mostrar_etiqueta_producto_con_estilo($producto['tamano'], 'bg-purple-700/50 text-purple-200', 'N/A', true); ?>
+                
+                <?php if ($producto['es_nuevo']): ?>
+                    <span class="etiqueta-producto-base bg-green-700/50 text-green-200">Nuevo</span>
+                <?php endif; ?>
+                <?php if ($producto['es_destacado']): ?>
+                    <span class="etiqueta-producto-base bg-amber-700/50 text-amber-200">Destacado</span>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-slate-900 py-12">
+        <div class="container mx-auto px-4">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
+                <div class="fade-in">
+                    <div x-data="{ 
+                            activeImage: '<?= !empty($todas_imagenes) ? htmlspecialchars($todas_imagenes[0]) : '' ?>',
+                            showLightbox: false,
+                            lightboxImg: '',
+                            openLightbox(img) {
+                                this.lightboxImg = img;
+                                this.showLightbox = true;
+                                document.body.style.overflow = 'hidden';
+                            },
+                            closeLightbox() {
+                                this.showLightbox = false;
+                                document.body.style.overflow = '';
+                            }
+                        }">
+                        <div class="bg-slate-800 rounded-2xl overflow-hidden mb-4 relative aspect-square shadow-xl">
+                            <template x-if="activeImage">
+                                <img
+                                    :src="activeImage"
+                                    @click="openLightbox(activeImage)"
+                                    class="w-full h-full object-cover cursor-zoom-in transition-transform duration-500 hover:scale-105"
+                                    alt="Imagen principal de <?= htmlspecialchars($producto['nombre']) ?>">
+                            </template>
+                            <?php if ($promocion_data): ?>
+                                <?php
+                                $badge_text_detail = '';
+                                $apply_pulse_to_badge = false;
+                                switch ($promocion_data['tipo_promocion']) {
+                                    case 'descuento': 
+                                        if ($ahorro > 0) { 
+                                            $badge_text_detail = '-' . (float)$promocion_data['valor_promocion'] . '%';
+                                            $apply_pulse_to_badge = true;
+                                        }
+                                        break;
+                                    case 'descuento_fijo':
+                                        if ($ahorro > 0) {
+                                            $badge_text_detail = '-$' . number_format((float)$promocion_data['valor_promocion'], 2);
+                                            $apply_pulse_to_badge = true;
+                                        }
+                                        break;
+                                    case 'regalo': $badge_text_detail = 'Con Regalo'; break;
+                                    case 'envio_gratis': $badge_text_detail = 'Envío Gratis'; break;
+                                    default: if ($promocion_tab_valida) { $badge_text_detail = 'Oferta'; } break;
+                                }
+                                ?>
+                                <?php if (!empty($badge_text_detail)): ?>
+                                    <div class="absolute top-4 right-4 promo-badge text-slate-900 font-bold py-1.5 px-3.5 rounded-full text-sm shadow-lg <?= ($apply_pulse_to_badge) ? 'badge-pulse' : '' ?>">
+                                        <?= htmlspecialchars($badge_text_detail) ?>
+                                    </div>
+                                <?php endif; ?>
+                            <?php endif; ?>
+                            <button @click="openLightbox(activeImage)" title="Ampliar imagen" class="absolute bottom-4 right-4 bg-black/60 hover:bg-black/80 text-white p-2.5 rounded-full transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" /></svg>
+                            </button>
+                        </div>
+                        <?php if (count($todas_imagenes) > 1): ?>
+                            <div class="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                                <?php foreach ($todas_imagenes as $index => $img): ?>
+                                    <div @click="activeImage = '<?= htmlspecialchars($img) ?>'" class="gallery-thumb aspect-square rounded-lg overflow-hidden cursor-pointer bg-slate-800" :class="{'active': activeImage === '<?= htmlspecialchars($img) ?>'}">
+                                        <img src="<?= htmlspecialchars($img) ?>" class="w-full h-full object-cover" alt="Miniatura <?= $index + 1 ?> de <?= htmlspecialchars($producto['nombre']) ?>">
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <div x-show="showLightbox" @keydown.escape.window="closeLightbox" class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 p-4" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0" style="display: none;">
+                            <div @click.away="closeLightbox" class="relative max-w-4xl max-h-[90vh] w-auto h-auto flex items-center justify-center">
+                                <button @click="closeLightbox" title="Cerrar" class="absolute -top-2 -right-2 sm:top-2 sm:right-2 z-10 text-white bg-black/50 hover:bg-black/80 rounded-full p-2 transition-colors"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                                <img :src="lightboxImg" alt="Imagen ampliada" class="max-h-[inherit] max-w-full object-contain rounded-lg shadow-2xl">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="fade-in delay-200" x-data="{ activeTab: 'descripcion' }">
+                    <div class="mb-6">
+                        <div class="flex items-baseline gap-3"> 
+                            <span class="text-5xl font-bold text-amber-400">$<?= number_format($precio_final, 2) ?></span>
+                            <?php if ($precio_original !== null && $precio_original > $precio_final): ?>
+                                <span class="text-2xl text-slate-400 line-through">$<?= number_format($precio_original, 2) ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <?php if ($ahorro > 0): ?>
+                            <div class="mt-2">
+                                <span class="inline-block text-lg font-bold text-green-300 bg-green-600/30 px-3 py-1.5 rounded-lg shadow-lg">¡AHORRAS $<?= number_format($ahorro, 2) ?> (<?= $porcentaje_ahorro ?>%)!</span>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                    <?php if ($total_opiniones_producto > 0): ?>
+                        <div class="flex items-center mt-3 mb-6"> 
+                            <div class="flex">
+                                <?php for ($i = 1; $i <= 5; $i++): ?>
+                                    <svg class="w-5 h-5 <?= ($i <= round($rating_promedio)) ? 'text-yellow-400' : 'text-slate-500' ?>" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
+                                <?php endfor; ?>
+                            </div>
+                            <a href="#lista-opiniones-seccion" @click.prevent="showOpinionesSeccion = true; setTimeout(() => { const el = document.getElementById('lista-opiniones-seccion'); if(el) el.scrollIntoView({ behavior: 'smooth' }); }, 50);" class="ml-2 text-sm text-slate-400 hover:text-yellow-400 transition-colors">
+                                <?= number_format($rating_promedio, 1) ?> (<?= $total_opiniones_producto ?> <?= $total_opiniones_producto === 1 ? 'opinión' : 'opiniones' ?>)
+                            </a>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <div class="mb-8" id="tabs-section">
+                        <div class="flex border-b border-slate-700">
+                            <button @click="activeTab = 'descripcion'" :class="activeTab === 'descripcion' ? 'border-yellow-400 text-yellow-400' : 'border-transparent text-slate-400 hover:text-white hover:border-slate-500'" class="py-3 px-4 font-semibold text-sm transition-colors focus:outline-none border-b-2 -mb-px">Descripción</button>
+                            <button @click="activeTab = 'especificaciones'" :class="activeTab === 'especificaciones' ? 'border-yellow-400 text-yellow-400' : 'border-transparent text-slate-400 hover:text-white hover:border-slate-500'" class="py-3 px-4 font-semibold text-sm transition-colors focus:outline-none border-b-2 -mb-px">Especificaciones</button>
+                            <?php if ($promocion_tab_valida): ?>
+                                <button @click="activeTab = 'promocion'" :class="activeTab === 'promocion' ? 'border-yellow-400 text-yellow-400' : 'border-transparent text-slate-400 hover:text-white hover:border-slate-500'" class="py-3 px-4 font-semibold text-sm transition-colors focus:outline-none border-b-2 -mb-px">Promoción</button>
+                            <?php endif; ?>
+                        </div>
+                        <div class="py-6">
+                            <div x-show="activeTab === 'descripcion'" class="text-slate-300 space-y-4 text-sm md:text-base prose prose-sm prose-invert max-w-none"><?php if (!empty($producto['descripcion'])): ?><?= nl2br(htmlspecialchars($producto['descripcion'])) ?><?php else: ?><p class="italic text-slate-500">Este producto aún no tiene descripción disponible.</p><?php endif; ?></div>
+                            <div x-show="activeTab === 'especificaciones'" class="text-slate-300 text-sm md:text-base space-y-10">
+                                <?php 
+                                $info_basica = ['categoria' => 'Categoría', 'modelo' => 'Modelo', 'tamano' => 'Tamaño', 'precio' => ['label' => 'Precio Base', 'value' => '$' . number_format($producto['precio'], 2)]];
+                                $tecnicas = ['material' => 'Material', 'acabado' => 'Acabado/Color', 'ancho_pulgadas' => 'Ancho del rin (pulgadas)', 'num_birlos' => 'Número de birlos/orificios', 'pcd' => 'Patrón de pernos/PCD', 'diametro_central' => 'Diámetro central (mm)', 'offset' => 'Offset/ET', 'peso' => 'Peso (kg)', 'stock' => 'Stock disponible', 'marca' => 'Marca/Fabricante'];
+                                $adicional = ['garantia' => 'Garantía', 'tiempo_entrega' => 'Tiempo estimado de entrega', 'estilo' => 'Estilo', 'caracteristicas_destacadas' => 'Características destacadas', 'compatibilidad' => 'Vehículos compatibles'];
+                                
+                                if (!function_exists('print_spec_group')) {
+                                    function print_spec_group($title, $color_class, $specs, $data_array) {
+                                        $has_content = false;
+                                        foreach (array_keys($specs) as $key) {
+                                            if (!empty($data_array[$key]) || (is_array($specs[$key]) && !empty($specs[$key]['value']))) {
+                                                $has_content = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!$has_content) return;
+
+                                        echo "<div>";
+                                        echo "<h3 class=\"text-lg font-semibold " . $color_class . " mb-3 border-b border-" . explode('-', $color_class)[1] . "-400/30 pb-2\">" . htmlspecialchars($title) . "</h3>";
+                                        echo "<table class=\"w-full text-left spec-table\"><tbody>";
+                                        foreach ($specs as $clave => $etiqueta_o_config) {
+                                            $etiqueta = is_array($etiqueta_o_config) ? $etiqueta_o_config['label'] : $etiqueta_o_config;
+                                            $valor = is_array($etiqueta_o_config) ? $etiqueta_o_config['value'] : ($data_array[$clave] ?? null);
+                                            
+                                            if ($valor !== null && $valor !== '') { 
+                                                echo '<tr>';
+                                                echo '<td class="pr-3 text-slate-400 w-2/5 md:w-1/3">' . htmlspecialchars($etiqueta) . '</td>';
+                                                echo '<td class="font-medium text-white whitespace-pre-wrap">' . nl2br(htmlspecialchars($valor)) . '</td>';
+                                                echo '</tr>';
+                                            }
+                                        }
+                                        echo "</tbody></table></div>";
+                                    }
+                                }
+                                print_spec_group('Información Básica', 'text-sky-400', $info_basica, $producto);
+                                print_spec_group('Especificaciones Técnicas', 'text-indigo-400', $tecnicas, $producto);
+                                print_spec_group('Información Adicional', 'text-purple-400', $adicional, $producto);
+                                ?>
+                            </div>
+                            <?php if ($promocion_tab_valida && $promocion_data): ?>
+                                <div x-show="activeTab === 'promocion'" class="text-slate-300 space-y-4 text-sm md:text-base">
+                                    <div class="bg-gradient-to-r from-yellow-600/20 to-yellow-500/10 p-5 rounded-lg border border-yellow-500/30 shadow-md">
+                                        <h3 class="text-yellow-300 text-xl font-semibold mb-3">
+                                            <?php
+                                            switch ($promocion_data['tipo_promocion']) {
+                                                case 'descuento': echo "¡" . (float)$promocion_data['valor_promocion'] . "% de descuento!"; break;
+                                                case 'descuento_fijo': echo "¡$" . number_format((float)$promocion_data['valor_promocion'], 2) . " de descuento!"; break;
+                                                case 'regalo': echo "¡Regalo incluido con tu compra!"; break;
+                                                case 'envio_gratis': echo "¡Disfruta de Envío Gratuito!"; break;
+                                                default: echo "¡Promoción Especial Aplicada!"; break;
+                                            }
+                                            ?>
+                                        </h3>
+                                        <?php if (!empty($promocion_data['descripcion'])): ?><p class="mb-3 prose prose-sm prose-invert max-w-none"><?= nl2br(htmlspecialchars($promocion_data['descripcion'])) ?></p><?php endif; ?>
+                                        <?php if (!empty($promocion_data['fecha_inicio']) && !empty($promocion_data['fecha_fin'])): ?><div class="text-xs text-slate-400">Válido del <?= date('d/m/Y', strtotime($promocion_data['fecha_inicio'])) ?> al <?= date('d/m/Y', strtotime($promocion_data['fecha_fin'])) ?></div><?php endif; ?>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row sm:justify-start gap-4 mb-8">
+                        <a href="mi_carrito.php?agregar=<?= $id ?>" 
+                           class="w-full sm:w-auto bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-600 hover:to-amber-600 text-slate-900 font-bold py-3.5 px-6 rounded-xl transition-all duration-300 text-center inline-flex items-center justify-center shadow-md hover:shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-400 focus:ring-offset-slate-900">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                            Agregar al carrito
+                        </a>
+                        <button @click="showShareModal = true" id="shareButton"
+                                class="w-full sm:w-auto bg-sky-600 hover:bg-sky-700 text-white font-medium py-3.5 px-6 rounded-xl transition-colors duration-300 flex items-center justify-center shadow-md hover:shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 focus:ring-offset-slate-900">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" /></svg>
+                            Compartir
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="flex items-center bg-slate-800/70 p-4 rounded-lg shadow"><div class="h-10 w-10 rounded-full bg-sky-600/30 flex items-center justify-center text-sky-300 mr-4 flex-shrink-0"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg></div><div><h3 class="font-medium text-white text-sm">Garantía Confiable</h3><p class="text-slate-400 text-xs"><?= htmlspecialchars($producto['garantia'] ?? '1 año contra defectos') ?></p></div></div>
+                        <div class="flex items-center bg-slate-800/70 p-4 rounded-lg shadow"><div class="h-10 w-10 rounded-full bg-sky-600/30 flex items-center justify-center text-sky-300 mr-4 flex-shrink-0"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" /></svg></div><div><h3 class="font-medium text-white text-sm">Envío Protegido</h3><p class="text-slate-400 text-xs"><?= htmlspecialchars($producto['tiempo_entrega'] ?? 'Consultar tiempos') ?></p></div></div>
+                    </div>
+                </div>
+            </div> 
+            
+            <div class="fade-in"> 
+                <div id="escribe-opinion-seccion" class="bg-slate-800/60 rounded-xl p-6 md:p-8 mt-10 shadow-xl mx-auto w-full max-w-xl">
+                    <h3 class="text-2xl font-bold text-white mb-2 text-center">
+                        <?= $comentario_existente_usuario ? 'Edita tu opinión' : 'Escribe tu opinión' ?>
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-6 text-center">
+                        Sobre el producto: <span class="text-white font-semibold"><?= htmlspecialchars($producto['nombre']) ?></span>
+                    </p>
+
+                    <?php if ($mensaje_envio_feedback): 
+                        $esExitoOpinion = (stripos($mensaje_envio_feedback, 'exitosa') !== false || stripos($mensaje_envio_feedback, 'gracias') !== false);
+                        $claseBgOpinion = $esExitoOpinion ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30';
+                        $claseTextOpinion = $esExitoOpinion ? 'text-green-300' : 'text-red-300';
+                    ?>
+                        <div id="mensaje-opinion-procesada" class="<?= $claseBgOpinion ?> p-4 rounded-lg border mb-6 text-sm shadow">
+                            <p class="<?= $claseTextOpinion ?>"><?= htmlspecialchars($mensaje_envio_feedback) ?></p>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($usuario_logueado): ?>
+                        <?php if ($mostrar_formulario_para_crear_o_editar): ?>
+                            <form method="post" action="detalle_producto.php?id=<?= $id ?>#escribe-opinion-seccion" class="space-y-5">
+                                <input type="hidden" name="accion_opinion" value="<?= $comentario_existente_usuario ? 'editar' : 'crear' ?>">
+                                
+                                <p class="text-slate-400 text-sm">Opinión como <strong class="text-white font-medium"><?= htmlspecialchars($nombre_usuario_actual) ?></strong></p>
+                                
+                                <div>
+                                    <label for="rating_input_field" class="block mb-1.5 text-sm font-medium text-slate-300">Calificación</label>
+                                    <div class="flex items-center space-x-1">
+                                        <?php for ($s = 1; $s <= 5; $s++): ?>
+                                            <button type="button" @click="ratingValueForm = <?= $s ?>; document.getElementById('rating_input_field').value = <?= $s ?>;" class="focus:outline-none p-1 rounded-md hover:bg-slate-700 transition-colors">
+                                                <svg :class="{'text-yellow-400': ratingValueForm >= <?= $s ?>, 'text-slate-500 hover:text-slate-400': ratingValueForm < <?= $s ?>}" class="w-6 h-6 cursor-pointer transition-colors" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
+                                            </button>
+                                        <?php endfor; ?>
+                                        <input type="hidden" id="rating_input_field" name="rating" x-model.number="ratingValueForm" required>
+                                        <span class="text-sm text-slate-400 ml-2" x-text="ratingValueForm ? `${ratingValueForm}/5 estrellas` : 'Selecciona tu calificación'"></span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label for="mensaje_opinion_input" class="block mb-1.5 text-sm font-medium text-slate-300">Tu opinión</label>
+                                    <textarea id="mensaje_opinion_input" name="mensaje_opinion_input" rows="4" required class="w-full p-3 bg-slate-900/70 border border-slate-700 rounded-lg text-white focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors placeholder-slate-500"><?= $comentario_existente_usuario ? htmlspecialchars($comentario_existente_usuario['mensaje']) : '' ?></textarea>
+                                </div>
+                                <button type="submit" class="w-full sm:w-auto bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white font-semibold py-3 px-8 rounded-lg transition-all duration-300 shadow-md hover:shadow-lg">
+                                    <?= $comentario_existente_usuario ? 'Actualizar Opinión' : 'Enviar opinión' ?>
+                                </button>
+                            </form>
+                        <?php else: ?>
+                             <div class="text-center py-6 bg-slate-900/30 rounded-lg">
+                                 <p class="text-slate-300">Ya has dejado una opinión para este producto.</p>
+                                 <p class="text-slate-400 text-sm mt-1">Puedes editarla si lo deseas.</p>
+                                 <button @click="window.location.href = 'detalle_producto.php?id=<?= $id ?>&editar_opinion=1#escribe-opinion-seccion';"
+                                         class="mt-3 inline-block bg-yellow-500 hover:bg-yellow-600 text-slate-900 font-semibold py-2 px-4 rounded-lg text-sm transition-colors">
+                                     Editar mi Opinión
+                                 </button>
+                             </div>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        <div class="text-center py-6">
+                            <p class="text-slate-400">Debes <a href="login.php" class="text-sky-400 hover:text-sky-300 font-semibold">iniciar sesión</a> o <a href="registro.php" class="text-sky-400 hover:text-sky-300 font-semibold">registrarte</a> para dejar una opinión.</p>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <div class="mt-16 fade-in delay-300">
+                <div class="flex justify-between items-center mb-8 border-b border-slate-700 pb-4">
+                    <h2 class="text-3xl font-bold text-white">Opiniones de Clientes</h2>
+                    <?php if (count($opiniones_para_mostrar) > 0): // Solo mostrar el botón si hay opiniones iniciales ?>
+                        <button @click="showOpinionesSeccion = !showOpinionesSeccion" 
+                                class="text-sm font-medium py-2 px-4 rounded-lg transition-colors duration-300"
+                                :class="showOpinionesSeccion ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-sky-600 hover:bg-sky-700 text-white'">
+                            <span x-text="showOpinionesSeccion ? 'Ocultar Opiniones (<?= count($opiniones_para_mostrar) ?>)' : 'Mostrar Opiniones (<?= count($opiniones_para_mostrar) ?>)'"></span>
+                        </button>
+                    <?php endif; ?>
+                </div>
+
+                <?php if (count($opiniones_para_mostrar) > 0): ?>
+                    <div id="lista-opiniones-seccion" x-show="showOpinionesSeccion" x-transition>
+                        <div class="space-y-8 mb-10"> 
+                            <?php foreach ($opiniones_para_mostrar as $op): ?>
+                                <div class="bg-slate-800/60 rounded-xl p-5 md:p-6 shadow-lg">
+                                    <div class="flex items-start">
+                                        <div class="w-10 h-10 rounded-full bg-sky-700/50 flex items-center justify-center text-sky-200 font-bold mr-4 flex-shrink-0 text-lg"><?= strtoupper(substr(htmlspecialchars($op['nombre_cliente']), 0, 1)) ?></div>
+                                        <div class="flex-1">
+                                            <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-1.5">
+                                                <h3 class="font-semibold text-white text-md"><?= htmlspecialchars($op['nombre_cliente']) ?></h3>
+                                                <span class="text-xs text-slate-400 mt-1 sm:mt-0"><?= date('d \d\e F \d\e Y', strtotime($op['creado_en'])) ?></span>
+                                            </div>
+                                            <div class="flex mb-3">
+                                                <?php for ($s_star = 1; $s_star <= 5; $s_star++): ?><svg class="w-4 h-4 <?= ($s_star <= $op['rating']) ? 'text-yellow-400' : 'text-slate-600' ?>" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg><?php endfor; ?>
+                                            </div>
+                                            <p class="text-slate-300 text-sm leading-relaxed mb-4 prose prose-sm prose-invert max-w-none"><?= nl2br(htmlspecialchars($op['mensaje'])) ?></p>
+                                            <?php if (!empty($op['respuesta'])): ?>
+                                                <div class="bg-slate-900/70 rounded-md p-4 border-l-4 border-sky-500 mt-4"><p class="text-sky-300 font-semibold text-xs mb-1">Respuesta del Vendedor</p><p class="text-slate-300 text-xs leading-relaxed prose prose-xs prose-invert max-w-none"><?= nl2br(htmlspecialchars($op['respuesta'])) ?></p></div>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                        
+                        <?php if ($total_opiniones_producto > MAX_OPINIONES_EN_DETALLE): ?>
+                            <div class="text-center mt-6 mb-12"> {/* Botón "Ver más" fuera del div que tenía el scroll */}
+                                <a href="testimonios.php?id_producto=<?= $id ?>" 
+                                   class="inline-flex items-center justify-center bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-600 hover:to-amber-600 text-slate-900 font-bold py-3 px-6 rounded-xl transition-all duration-300 text-center shadow-md hover:shadow-lg transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-400 focus:ring-offset-slate-900">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 -ml-1" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clip-rule="evenodd" />
+                                    </svg>
+                                    Ver <?= ($total_opiniones_producto - MAX_OPINIONES_EN_DETALLE) ?> opiniones más
+                                </a>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                <?php elseif (empty($mensaje_envio_feedback)): // Solo mostrar si no hay feedback pendiente y no hay opiniones iniciales ?>
+                    <div class="text-center py-12 bg-slate-800/50 rounded-xl shadow">
+                        <div class="text-slate-500 mb-4"><svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" /></svg></div>
+                        <h3 class="text-lg font-medium text-white mb-1">Aún no hay opiniones</h3>
+                        <p class="text-slate-400 text-sm">¡Anímate y sé el primero en compartir tu experiencia!</p>
+                    </div>
+                <?php endif; ?>
+            </div>
+            <?php if (count($productos_relacionados) > 0): ?>
+                <div class="mt-20 fade-in delay-400">
+                    <h2 class="text-3xl font-bold text-white mb-8 border-b border-slate-700 pb-4">También te podría interesar</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
+                        <?php foreach ($productos_relacionados as $rel): ?>
+                            <a href="detalle_producto.php?id=<?= $rel['id'] ?>" class="group block bg-slate-800/60 rounded-xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1">
+                                <div class="aspect-square overflow-hidden"><img src="<?= htmlspecialchars($rel['imagen_principal']) ?>" alt="<?= htmlspecialchars($rel['nombre']) ?>" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"></div>
+                                <div class="p-5"><h3 class="text-white font-semibold text-md mb-2 truncate group-hover:text-yellow-400 transition-colors"><?= htmlspecialchars($rel['nombre']) ?></h3><p class="text-sky-400 font-bold text-lg">$<?= number_format($rel['precio'], 2) ?></p></div>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            <?php endif; ?>
+        </div> </div> <div x-show="showShareModal" 
+         @keydown.escape.window="showShareModal = false"
+         class="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/80 p-4"
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         style="display: none;">
+        <div @click.away="showShareModal = false" class="share-modal-container w-full max-w-md sm:max-w-lg relative">
+            <div class="share-modal-header relative">
+                <h3 class="text-xl sm:text-2xl font-semibold">Compartir Producto</h3>
+                <p class="brand-name">Rinesport</p>
+                <button @click="showShareModal = false" title="Cerrar modal" class="share-modal-close-button absolute top-3 right-3 sm:top-4 sm:right-4 p-1 rounded-full">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 sm:h-7 sm:w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+            
+            <div class="share-modal-body">
+                <p class="mb-4 text-sm">Comparte <strong x-text="productName" class="font-semibold"></strong> con tus amigos:</p>
+
+                <div class="mb-5">
+                    <label for="share-url-input" class="block text-xs mb-1">Enlace del producto:</label>
+                    <div class="flex">
+                        <input id="share-url-input" type="text" :value="shareUrl" readonly 
+                               class="w-full p-2.5 border rounded-l-lg text-sm focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400">
+                        <button @click="navigator.clipboard.writeText(shareUrl); $el.innerText = '¡Copiado!'; setTimeout(() => $el.innerText = 'Copiar', 2000)"
+                                class="copy-button font-semibold py-2.5 px-3 sm:px-4 rounded-r-lg transition-colors text-sm whitespace-nowrap">
+                            Copiar
+                        </button>
+                    </div>
+                </div>
+
+                <p class="text-sm mb-3">O comparte directamente en:</p>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+                    <a :href="'https://wa.me/?text=' + encodeURIComponent(productName + ': ' + shareUrl)" target="_blank" rel="noopener noreferrer" class="social-share-button flex items-center justify-center gap-2 font-medium py-2.5 px-2 sm:px-3 rounded-lg transition-colors text-xs sm:text-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="currentColor"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01s-.525.074-.798.372c-.272.296-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.626.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.289.173-1.413z"/></svg>
+                        WhatsApp
+                    </a>
+                    <a :href="'https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(shareUrl)" target="_blank" rel="noopener noreferrer" class="social-share-button flex items-center justify-center gap-2 font-medium py-2.5 px-2 sm:px-3 rounded-lg transition-colors text-xs sm:text-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="currentColor"><path d="M9 8h-3v4h3v12h5v-12h3.642l.358-4h-4v-1.667c0-.955.192-1.333 1.115-1.333h2.885v-5h-3.808c-3.596 0-5.192 1.583-5.192 4.615v3.385z"/></svg>
+                        Facebook
+                    </a>
+                    <a :href="'https://twitter.com/intent/tweet?url=' + encodeURIComponent(shareUrl) + '&text=' + encodeURIComponent('Echa un vistazo a ' + productName + ': ')" target="_blank" rel="noopener noreferrer" class="social-share-button flex items-center justify-center gap-2 font-medium py-2.5 px-2 sm:px-3 rounded-lg transition-colors text-xs sm:text-sm">
+                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="currentColor"><path d="M24 4.557c-.883.392-1.832.656-2.828.775 1.017-.609 1.798-1.574 2.165-2.724-.951.564-2.005.974-3.127 1.195-.897-.957-2.178-1.555-3.594-1.555-3.179 0-5.515 2.966-4.797 6.045-4.091-.205-7.719-2.165-10.148-5.144-.422.724-.665 1.56-.665 2.452 0 1.606.816 3.024 2.054 3.849-.758-.024-1.474-.233-2.102-.578v.062c0 2.243 1.595 4.112 3.712 4.543-.387.105-.796.161-1.21.161-.299 0-.589-.029-.871-.081.588 1.834 2.299 3.171 4.326 3.208-1.583 1.241-3.582 1.981-5.755 1.981-.374 0-.743-.022-1.107-.065 2.049 1.317 4.485 2.086 7.14 2.086 8.568 0 13.255-7.099 13.255-13.254 0-.202-.005-.403-.014-.603.91-.658 1.7-1.476 2.323-2.41z"/></svg>
+                        Twitter
+                    </a>
+                    <a :href="'mailto:?subject=' + encodeURIComponent('Mira este producto: ' + productName) + '&body=' + encodeURIComponent('Hola,\n\nCreo que te podría interesar este producto: ' + productName + '\n\n' + shareUrl)" class="social-share-button flex items-center justify-center gap-2 font-medium py-2.5 px-2 sm:px-3 rounded-lg transition-colors text-xs sm:text-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                        Email
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div> 
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const params = new URLSearchParams(window.location.search);
+    const opinionProcesada = params.has('opinion_procesada');
+    const editarOpinionFlag = params.has('editar_opinion');
+    const alpineComponent = document.querySelector('[x-data]'); 
+
+    if (editarOpinionFlag && alpineComponent && alpineComponent.__x) {
+        const escribeOpinionSection = document.getElementById('escribe-opinion-seccion');
+        if (escribeOpinionSection) {
+            if (alpineComponent.__x.hasOwnProperty('showOpinionesSeccion')) {
+                <?php if (count($opiniones_para_mostrar) > 0 || $comentario_existente_usuario): ?>
+                    alpineComponent.__x.showOpinionesSeccion = true; 
+                <?php endif; ?>
+            }
+            setTimeout(() => { 
+                escribeOpinionSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 50);
+        }
+    } else if (opinionProcesada) {
+        setTimeout(() => { 
+            const escribeOpinionSection = document.getElementById('escribe-opinion-seccion');
+            if (escribeOpinionSection) {
+                escribeOpinionSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            if (alpineComponent && alpineComponent.__x && alpineComponent.__x.hasOwnProperty('showOpinionesSeccion')) {
+                <?php if (count($opiniones_para_mostrar) > 0): // Solo mostrar si hay opiniones iniciales ?>
+                    alpineComponent.__x.showOpinionesSeccion = true;
+                <?php endif; ?>
+            }
+        }, 150); 
+    } else if (window.location.hash === '#lista-opiniones-seccion') {
+        if (alpineComponent && alpineComponent.__x && alpineComponent.__x.hasOwnProperty('showOpinionesSeccion')) {
+            <?php if (count($opiniones_para_mostrar) > 0): ?>
+                alpineComponent.__x.showOpinionesSeccion = true; 
+                setTimeout(() => {
+                    const listaOpiniones = document.getElementById('lista-opiniones-seccion');
+                    if (listaOpiniones) {
+                        listaOpiniones.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                }, 100);
+            <?php endif; ?>
+        }
+    } else { // MODIFICADO: Comportamiento por defecto
+        if (alpineComponent && alpineComponent.__x && alpineComponent.__x.hasOwnProperty('showOpinionesSeccion')) {
+             <?php if (count($opiniones_para_mostrar) > 0 ): ?>
+                alpineComponent.__x.showOpinionesSeccion = true; // Mostrar por defecto si hay opiniones
+            <?php else: ?>
+                alpineComponent.__x.showOpinionesSeccion = false; // Ocultar si no hay opiniones iniciales
+            <?php endif; ?>
+        }
+    }
+
+    const mensajeOpinionProcesadaEl = document.getElementById('mensaje-opinion-procesada');
+    if (mensajeOpinionProcesadaEl) {
+        setTimeout(() => {
+            mensajeOpinionProcesadaEl.style.transition = 'opacity 0.5s ease-out, transform 0.5s ease-out';
+            mensajeOpinionProcesadaEl.style.opacity = '0';
+            mensajeOpinionProcesadaEl.style.transform = 'translateY(-20px)';
+            setTimeout(() => {
+                mensajeOpinionProcesadaEl.classList.add('hidden');
+                mensajeOpinionProcesadaEl.style.opacity = '1'; 
+                mensajeOpinionProcesadaEl.style.transform = 'translateY(0)';
+            }, 500); 
+        }, 4000); 
+    }
+});
+</script>
+
+<?php 
+require_once 'footer.php'; 
+ob_end_flush(); 
+?>
